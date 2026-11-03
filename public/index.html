@@ -35,6 +35,7 @@
   #view { position: relative; }
   button.bar { padding: 10px 14px; font-size: 15px; border-radius: 10px; border: 1px solid var(--border); background: var(--card); color: var(--text); }
   button.bar.go { background: var(--accent); border-color: var(--accent); color: #fff; }
+  select.bar { padding: 10px 8px; font-size: 14px; border-radius: 10px; border: 1px solid var(--border); background: var(--card); color: var(--text); max-width: 96px; }
   #layout { display: flex; flex: 1; min-height: 0; }
   #sidebar { width: 248px; background: var(--panel); border-right: 1px solid var(--border); padding: 10px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; }
   #sidebar.hide { display: none; }
@@ -92,7 +93,7 @@
   <button class="bar" id="menuBtn">&#9776;</button>
   <span id="appTitle">Remote Browser</span>
   <span style="flex:1"></span>
-  <select class="bar" id="qualitySel" title="Stream quality">
+  <select class="bar" id="qualitySel" title="Stream resolution">
     <option value="low">480p</option>
     <option value="med" selected>720p</option>
     <option value="high">1080p</option>

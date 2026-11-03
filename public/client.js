@@ -94,7 +94,7 @@ function renderTabs() {
   $('empty').classList.toggle('show', !hasTabs);
   if (meta) {
     const names = (meta.viewers || []).join(', ');
-    $('meta').textContent = `Created by ${meta.creator || '?'} • viewing: ${names || '—'}`;
+    $('meta').textContent = `Created by ${meta.creator || 'system'} • watching: ${names || 'just you'}`;
   } else {
     $('meta').textContent = '';
   }

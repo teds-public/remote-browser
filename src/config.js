@@ -30,6 +30,13 @@ function parseHeadless(raw) {
   return null;
 }
 
+function parseNoGpu(raw) {
+  const v = String(raw ?? 'false').trim().toLowerCase();
+  if (['1', 'true', 'yes', 'on'].includes(v)) return true;
+  if (['0', 'false', 'no', 'off'].includes(v)) return false;
+  return null;
+}
+
 function loadConfig(env = process.env) {
   const viewport = parseViewport(env.VIEWPORT || '1920x1080');
   if (!viewport) throw new Error('VIEWPORT sai format, dung WxH (vd 1920x1080).');
@@ -47,7 +54,10 @@ function loadConfig(env = process.env) {
   const headless = parseHeadless(env.HEADLESS);
   if (headless === null) throw new Error('HEADLESS phai la true/false.');
 
-  return { port, viewport, maxTabs, profileDir, token, headless };
+  const noGpu = parseNoGpu(env.NO_GPU);
+  if (noGpu === null) throw new Error('NO_GPU phai la true/false.');
+
+  return { port, viewport, maxTabs, profileDir, token, headless, noGpu };
 }
 
-module.exports = { loadConfig, parseViewport, parsePort, parseMaxTabs, parseHeadless };
+module.exports = { loadConfig, parseViewport, parsePort, parseMaxTabs, parseHeadless, parseNoGpu };

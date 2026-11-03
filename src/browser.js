@@ -16,13 +16,21 @@ function normalizeUrl(raw) {
   return parsed.toString();
 }
 
-function createBrowserManager({ viewport, maxTabs, profileDir, headless = true }) {
+function createBrowserManager({ viewport, maxTabs, profileDir, headless = true, noGpu = false }) {
   let context = null;
   let counter = 0;
   const tabs = new Map();
   const knownPages = new Set();
   const listeners = new Set();
   let blockedListener = null;
+
+  const baseArgs = [
+    '--disable-background-timer-throttling',
+    '--disable-backgrounding-occluded-windows',
+    '--disable-renderer-backgrounding',
+    '--disable-features=Translate,OptimizationHints,MediaRouter',
+  ];
+  if (headless && noGpu) baseArgs.push('--disable-gpu');
 
   function emit() {
     const state = listTabs();
@@ -71,15 +79,7 @@ function createBrowserManager({ viewport, maxTabs, profileDir, headless = true }
     context = await chromium.launchPersistentContext(profileDir, {
       viewport,
       headless,
-      args: headless
-        ? [
-            '--disable-gpu',
-            '--disable-background-timer-throttling',
-            '--disable-backgrounding-occluded-windows',
-            '--disable-renderer-backgrounding',
-            '--disable-features=Translate,OptimizationHints,MediaRouter',
-          ]
-        : [],
+      args: noGpu ? [...baseArgs, '--disable-gpu'] : baseArgs,
     });
     context.on('page', (page) => {
       if (knownPages.has(page)) return;
@@ -88,7 +88,7 @@ function createBrowserManager({ viewport, maxTabs, profileDir, headless = true }
         if (blockedListener) blockedListener();
         return;
       }
-      registerPage(page, 'he thong').catch(() => {});
+      registerPage(page, 'system').catch(() => {});
     });
     const pages = context.pages();
     for (const page of pages) await page.close().catch(() => {});
@@ -155,7 +155,7 @@ function createBrowserManager({ viewport, maxTabs, profileDir, headless = true }
       throw err;
     }
     const page = await context.newPage();
-    const tab = await registerPage(page, creator || 'he thong');
+    const tab = await registerPage(page, creator || 'system');
     if (url && url !== 'about:blank') await navigate(tab.id, url);
     return describe(tab);
   }
@@ -219,11 +219,31 @@ function createBrowserManager({ viewport, maxTabs, profileDir, headless = true }
 
   const freezeSessions = new Map();
 
+  async function setMediaBlocked(tab, blocked) {
+    if (tab.mediaBlocked === blocked) return;
+    tab.mediaBlocked = blocked;
+    if (blocked) {
+      await tab.page.route('**/*', (route) => {
+        const type = route.request().resourceType();
+        if (type === 'media' || type === 'font') return route.abort();
+        return route.continue();
+      }).catch(() => {});
+      await tab.page.evaluate(() => {
+        document.querySelectorAll('video, audio').forEach((el) => {
+          try { el.pause(); } catch { /* noop */ }
+        });
+      }).catch(() => {});
+    } else {
+      await tab.page.unrouteAll({ behavior: 'wait' }).catch(() => {});
+    }
+  }
+
   async function freeze(id, shouldFreeze) {
     const tab = tabs.get(id);
     if (!tab) return;
     if (tab.frozen === shouldFreeze) return;
     tab.frozen = shouldFreeze;
+    await setMediaBlocked(tab, shouldFreeze);
     try {
       let cdp = freezeSessions.get(id);
       if (!cdp) {
