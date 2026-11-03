@@ -41,7 +41,20 @@ function submitName() {
   myName = v;
   localStorage.setItem('rb-name', myName);
   $('nameOverlay').classList.add('hidden');
-  socket.emit('join', { name: myName });
+  socket.emit('join', { name: myName, quality: streamQuality(), paused: streamPaused() });
+}
+
+function streamQuality() {
+  return localStorage.getItem('rb-quality') || 'med';
+}
+
+function streamPaused() {
+  return localStorage.getItem('rb-paused') === '1';
+}
+
+function applyStreamUi() {
+  $('qualitySel').value = streamQuality();
+  $('pauseBtn').textContent = streamPaused() ? 'Resume' : 'Pause';
 }
 
 function renderTabs() {
@@ -124,14 +137,10 @@ function go(url) {
 }
 
 function toPageCoords(clientX, clientY) {
-  let rect = img.getBoundingClientRect();
-  let vw = img.naturalWidth;
-  let vh = img.naturalHeight;
-  if ((!vw || !vh || !rect.width || !rect.height) && serverViewport) {
-    vw = serverViewport.width;
-    vh = serverViewport.height;
-    rect = view.getBoundingClientRect();
-  }
+  if (!serverViewport) return null;
+  const rect = img.getBoundingClientRect();
+  const vw = serverViewport.width;
+  const vh = serverViewport.height;
   if (!vw || !vh || !rect.width || !rect.height) return null;
   const scale = Math.min(rect.width / vw, rect.height / vh);
   const offX = rect.left + (rect.width - vw * scale) / 2;
@@ -258,6 +267,22 @@ $('newUrlInput').addEventListener('keydown', (e) => {
   if (e.key === 'Escape') closeNewTabPopup();
 });
 $('backBtn').onclick = () => { if (activeTabId) socket.emit('nav:back', { tabId: activeTabId }); };
+$('qualitySel').onchange = () => {
+  localStorage.setItem('rb-quality', $('qualitySel').value);
+  socket.emit('stream:prefs', { quality: $('qualitySel').value, paused: streamPaused() });
+};
+$('pauseBtn').onclick = () => {
+  const next = !streamPaused();
+  localStorage.setItem('rb-paused', next ? '1' : '0');
+  applyStreamUi();
+  if (next) {
+    setFrame(null);
+    img.removeAttribute('src');
+  } else {
+    setLoading(true);
+  }
+  socket.emit('stream:prefs', { quality: streamQuality(), paused: next });
+};
 $('reloadBtn').onclick = () => {
   if (!activeTabId) return;
   const tab = tabs.find((t) => t.id === activeTabId);
@@ -272,7 +297,8 @@ $('streamBadge').onclick = () => {
 };
 
 socket.on('connect', () => {
-  if (myName) socket.emit('join', { name: myName });
+  applyStreamUi();
+  if (myName) socket.emit('join', { name: myName, quality: streamQuality(), paused: streamPaused() });
   else askName();
 });
 
@@ -308,7 +334,7 @@ socket.on('tabs:update', applyTabs);
 socket.on('tab:created', ({ tabId }) => watchTab(tabId));
 
 socket.on('frame', (tabId, blob) => {
-  if (tabId !== activeTabId) return;
+  if (tabId !== activeTabId || streamPaused()) return;
   setLoading(false);
   lastFrameAt = Date.now();
   $('streamBadge').classList.remove('show');
@@ -330,11 +356,12 @@ socket.on('error', ({ message }) => toast(message || 'Unknown error.'));
 
 setInterval(() => {
   const click = $('stats').dataset.click ? ` • click ${$('stats').dataset.click}` : '';
-  $('stats').textContent = `${frames}fps${click} • ${socket.connected ? 'online' : 'reconnecting...'}`;
+  $('stats').textContent = `${streamPaused() ? 'paused' : `${frames}fps`}${click} • ${socket.connected ? 'online' : 'reconnecting...'}`;
   frames = 0;
-  if (activeTabId && lastFrameAt && Date.now() - lastFrameAt > 3000) {
+  if (activeTabId && !streamPaused() && lastFrameAt && Date.now() - lastFrameAt > 3000) {
     $('streamBadge').classList.add('show');
   }
 }, 1000);
 
+applyStreamUi();
 if (!myName) askName();

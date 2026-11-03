@@ -18,7 +18,10 @@ function viewerCountOf(browser, presence, tabId) {
 
 async function refreshStream(browser, presence, streamer, tabId) {
   if (!tabId || !browser.has(tabId)) return;
-  await streamer.setViewers(tabId, viewerCountOf(browser, presence, tabId));
+  const prefs = presence.streamPrefsFor(tabId);
+  const nobodyWatching = !prefs || prefs.paused;
+  await browser.freeze(tabId, nobodyWatching);
+  await streamer.setViewers(tabId, nobodyWatching ? 0 : prefs);
 }
 
 async function sendShot(socket, browser, tabId) {
@@ -34,12 +37,15 @@ async function sendShot(socket, browser, tabId) {
 function registerSockets(io, { browser, presence, streamer, input }) {
   browser.onUpdate(() => broadcastTabs(io, browser, presence));
   browser.onPopupBlocked(() => {
-    io.emit('error', { message: 'Popup bi chan: da dat gioi han tab.' });
+    io.emit('error', { message: 'Popup blocked: tab limit reached.' });
   });
 
   io.on('connection', (socket) => {
-    socket.on('join', async ({ name } = {}) => {
+    socket.on('join', async ({ name, quality, paused } = {}) => {
       const clean = presence.join(socket.id, name);
+      if (quality !== undefined || paused !== undefined) {
+        presence.setStream(socket.id, quality, paused);
+      }
       socket.data.name = clean;
       socket.data.tabId = null;
       socket.emit('joined', { name: clean, viewport: browser.viewport });
@@ -138,6 +144,13 @@ function registerSockets(io, { browser, presence, streamer, input }) {
 
     socket.on('input:key', ({ tabId, key } = {}) => {
       input.key(tabId, key).catch((err) => socket.emit('error', { message: err.message }));
+    });
+
+    socket.on('stream:prefs', async ({ quality, paused } = {}) => {
+      presence.setStream(socket.id, quality, paused);
+      broadcastTabs(io, browser, presence);
+      for (const t of browser.listTabs()) await refreshStream(browser, presence, streamer, t.id);
+      await sendShot(socket, browser, socket.data.tabId);
     });
 
     socket.on('shot:refresh', async ({ tabId } = {}) => {

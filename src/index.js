@@ -35,6 +35,14 @@ async function main() {
   app.get('/healthz', (req, res) => {
     res.json({ ok: true, tabs: browser.listTabs().length });
   });
+  app.get('/debugz', (req, res) => {
+    res.json({
+      ok: true,
+      tabs: browser.debugTabs(),
+      memory: process.memoryUsage(),
+      uptime: process.uptime(),
+    });
+  });
 
   const server = app.listen(config.port, '0.0.0.0', () => {
     console.log(`remote-browser dang chay: http://localhost:${config.port}`);

@@ -48,6 +48,14 @@ function createBrowserManager({ viewport, maxTabs, profileDir, headless = true }
     }));
   }
 
+  function debugTabs() {
+    return [...tabs.values()].map((t) => ({
+      id: t.id,
+      url: t.url,
+      frozen: !!t.frozen,
+    }));
+  }
+
   function describe(tab) {
     return {
       id: tab.id,
@@ -63,7 +71,15 @@ function createBrowserManager({ viewport, maxTabs, profileDir, headless = true }
     context = await chromium.launchPersistentContext(profileDir, {
       viewport,
       headless,
-      args: headless ? ['--disable-gpu'] : [],
+      args: headless
+        ? [
+            '--disable-gpu',
+            '--disable-background-timer-throttling',
+            '--disable-backgrounding-occluded-windows',
+            '--disable-renderer-backgrounding',
+            '--disable-features=Translate,OptimizationHints,MediaRouter',
+          ]
+        : [],
     });
     context.on('page', (page) => {
       if (knownPages.has(page)) return;
@@ -201,6 +217,27 @@ function createBrowserManager({ viewport, maxTabs, profileDir, headless = true }
     return tabs.get(id)?.page || null;
   }
 
+  const freezeSessions = new Map();
+
+  async function freeze(id, shouldFreeze) {
+    const tab = tabs.get(id);
+    if (!tab) return;
+    if (tab.frozen === shouldFreeze) return;
+    tab.frozen = shouldFreeze;
+    try {
+      let cdp = freezeSessions.get(id);
+      if (!cdp) {
+        cdp = await tab.page.context().newCDPSession(tab.page);
+        freezeSessions.set(id, cdp);
+      }
+      await cdp.send('Page.setWebLifecycleState', {
+        state: shouldFreeze ? 'frozen' : 'active',
+      });
+    } catch {
+      // Best effort: tab van chay binh thuong neu lenh that bai.
+    }
+  }
+
   async function reloadTab(id) {
     const tab = tabs.get(id);
     if (!tab) return false;
@@ -213,7 +250,7 @@ function createBrowserManager({ viewport, maxTabs, profileDir, headless = true }
     await context?.close().catch(() => {});
   }
 
-  return { viewport, launch, onUpdate, onPopupBlocked, listTabs, newTab, closeTab, closeAllTabs, navigate, screenshot, has, getPage, reloadTab, shutdown };
+  return { viewport, launch, onUpdate, onPopupBlocked, listTabs, debugTabs, newTab, closeTab, closeAllTabs, navigate, screenshot, freeze, has, getPage, reloadTab, shutdown };
 }
 
 module.exports = { createBrowserManager, normalizeUrl };
