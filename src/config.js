@@ -12,7 +12,7 @@ function parseViewport(raw) {
 }
 
 function parsePort(raw) {
-  const port = Number(String(raw ?? '3000').trim());
+  const port = Number(String(raw ?? '5001').trim());
   if (!Number.isInteger(port) || port < 1 || port > 65535) return null;
   return port;
 }

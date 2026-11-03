@@ -15,8 +15,8 @@ npm start
 rem or double-click run.bat
 ```
 
-Open on phones on the same Wi-Fi: `http://<desktop-ip>:3000`.
-Health check: `http://<desktop-ip>:3000/healthz`.
+Open on phones on the same Wi-Fi: `http://<desktop-ip>:5001`.
+Health check: `http://<desktop-ip>:5001/healthz`.
 
 ## Project structure
 
@@ -44,7 +44,7 @@ remote-browser/
 
 | Variable | Default | Notes |
 |---|---|---|
-| `PORT` | 3000 | HTTP + Socket.IO port |
+| `PORT` | 5001 | HTTP + Socket.IO port |
 | `VIEWPORT` | 1920x1080 | tab size, parsed at startup, crashes loudly if invalid |
 | `MAX_TABS` | 8 | over limit: tab creation refused, popups auto-closed |
 | `PROFILE_DIR` | ./profile | cookies/logins persist here, never wiped on restart |

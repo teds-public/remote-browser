@@ -1,7 +1,7 @@
 'use strict';
 
 const INTERVAL_MS = Number(process.env.MONITOR_INTERVAL_MS || 60_000);
-const PORT = Number(process.env.PORT || 3000);
+const PORT = Number(process.env.PORT || 5001);
 const URL = `http://localhost:${PORT}/healthz`;
 
 async function ping() {
