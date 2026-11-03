@@ -1,0 +1,16 @@
+{
+  "name": "remote-browser",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Remote browser dung chung: 1 Chromium persistent, N tab, dieu khien qua dien thoai (LAN).",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "express": "^4.21.2",
+    "playwright": "^1.49.1",
+    "socket.io": "^4.8.1"
+  }
+}
