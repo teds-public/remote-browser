@@ -75,11 +75,28 @@ function createBrowserManager({ viewport, maxTabs, profileDir, headless = true, 
     };
   }
 
+  let launching = null;
+
   async function launch() {
-    context = await chromium.launchPersistentContext(profileDir, {
+    if (launching) return launching;
+    launching = doLaunch().finally(() => { launching = null; });
+    return launching;
+  }
+
+  async function doLaunch() {
+    const opts = {
       viewport,
       headless,
       args: noGpu ? [...baseArgs, '--disable-gpu'] : baseArgs,
+    };
+    if (context) await context.close().catch(() => {});
+    tabs.clear();
+    knownPages.clear();
+    freezeSessions.clear();
+    context = await chromium.launchPersistentContext(profileDir, opts);
+    context.on('close', () => {
+      tabs.clear();
+      emit();
     });
     context.on('page', (page) => {
       if (knownPages.has(page)) return;
@@ -148,12 +165,25 @@ function createBrowserManager({ viewport, maxTabs, profileDir, headless = true, 
     return tab;
   }
 
+  async function ensureContext() {
+    if (context) {
+      try {
+        await context.newPage().then((p) => p.close());
+        return;
+      } catch {
+        // Context chet — relaunch ben duoi.
+      }
+    }
+    await launch();
+  }
+
   async function newTab(url, creator) {
     if (tabs.size >= maxTabs) {
       const err = new Error(`Da dat gioi han ${maxTabs} tab.`);
       err.code = 'MAX_TABS';
       throw err;
     }
+    await ensureContext();
     const page = await context.newPage();
     const tab = await registerPage(page, creator || 'system');
     if (url && url !== 'about:blank') await navigate(tab.id, url);
