@@ -30,8 +30,6 @@
   .ghost { background: var(--card); color: var(--text); }
   header { display: flex; gap: 8px; padding: 10px 12px; background: var(--panel); border-bottom: 1px solid var(--border); align-items: center; }
   #appTitle { font-weight: 700; font-size: 16px; }
-  #navFloat { position: absolute; right: 10px; bottom: 10px; display: flex; gap: 8px; }
-  #navFloat button { width: 44px; height: 44px; border-radius: 50%; border: 1px solid var(--border); background: rgba(31,36,48,.9); color: var(--text); font-size: 18px; }
   #view { position: relative; }
   button.bar { padding: 10px 14px; font-size: 15px; border-radius: 10px; border: 1px solid var(--border); background: var(--card); color: var(--text); }
   button.bar.go { background: var(--accent); border-color: var(--accent); color: #fff; }
@@ -99,6 +97,7 @@
     <option value="high">1080p</option>
   </select>
   <button class="bar" id="pauseBtn" title="Pause stream">Pause</button>
+  <button class="bar" id="reloadBtn" title="Reload">&#10227;</button>
   <button class="bar" id="newTabBtn" title="New tab">+ New tab</button>
 </header>
 <div id="layout">
@@ -108,10 +107,6 @@
       <img id="shot" alt="No image yet" />
       <div id="loading" class="loading hidden">Loading...</div>
       <button id="streamBadge">Stream lost — tap to retry</button>
-      <div id="navFloat">
-        <button id="backBtn" title="Back">&larr;</button>
-        <button id="reloadBtn" title="Reload">&#10227;</button>
-      </div>
     </div>
     <div id="empty">
       <div>No open tabs</div>

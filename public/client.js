@@ -266,7 +266,6 @@ $('newUrlInput').addEventListener('keydown', (e) => {
   if (e.key === 'Enter') confirmNewTab();
   if (e.key === 'Escape') closeNewTabPopup();
 });
-$('backBtn').onclick = () => { if (activeTabId) socket.emit('nav:back', { tabId: activeTabId }); };
 $('qualitySel').onchange = () => {
   localStorage.setItem('rb-quality', $('qualitySel').value);
   socket.emit('stream:prefs', { quality: $('qualitySel').value, paused: streamPaused() });
