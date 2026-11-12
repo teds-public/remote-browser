@@ -280,22 +280,11 @@ impl Presence {
     }
 }
 
+#[derive(Debug, Clone, Copy)]
 pub enum TabEvent {
-    Created {
-        id: TabId,
-        creator: String,
-    },
-    Closed {
-        id: TabId,
-    },
-    Updated {
-        id: TabId,
-        title: String,
-        url: String,
-    },
-    Crashed {
-        id: TabId,
-    },
+    Created,
+    Closed,
+    Updated,
 }
 
 pub struct Frame {

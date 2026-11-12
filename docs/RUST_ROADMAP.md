@@ -1,76 +1,65 @@
 # Remote Browser - Rust Version Roadmap
 
-## Current Status (chromiumoxide 0.9)
+## Status: complete
 
-**Discovery:** chromiumoxide 0.9 has input APIs that 0.7 lacked!
-- ✅ `page.click(x, y)` exists
-- ✅ `page.move_mouse(x, y)` exists
-- ⚠️ CDP types still need workarounds
+All phases are implemented and verified on chromiumoxide 0.9, socketioxide 0.18,
+Chrome 157 and Windows 10. See [RUST_STATUS.md](RUST_STATUS.md) for evidence and
+known gaps.
 
-## Roadmap to Complete Rust Version
+### Phase 1: Input Module — done
 
-### Phase 1: Update Input Module (2-3 hours)
-- [ ] Update `input.rs` to use `page.click()` instead of `page.mouse.click()`
-- [ ] Check for keyboard typing methods in 0.9
-- [ ] Add type_str workaround if needed (use evaluate with JS)
-- [ ] Test coordinate clamping with new API
+- [x] `page.click(Point)` replaces `page.mouse.click`
+- [x] `Input.insertText` for text (no public `page.keyboard` in 0.9)
+- [x] `Input.dispatchKeyEvent` for the allow-listed keys
+- [x] `Input.dispatchMouseEvent` (`mouseWheel`) for scroll and Ctrl+wheel zoom
+- [x] Coordinate clamping unchanged, now rejects non-finite values
+- [x] UTF-8-safe text truncation at 500 chars
 
-### Phase 2: Fix CDP Type Imports (2-3 hours)
-- [ ] Find WebLifecycleState in chromiumoxide 0.9
-- [ ] Find ScreencastFrameEvent in chromiumoxide 0.9  
-- [ ] Use direct CDP commands if types not exported
-- [ ] Alternative: Create CDP command wrappers
+### Phase 2: CDP Type Imports — done
 
-### Phase 3: Update Browser Module (1-2 hours)
-- [ ] Remove `page.mouse` / `page.keyboard` references
-- [ ] Use Page-level methods throughout
-- [ ] Test tab freeze with 0.9 API
-- [ ] Verify auto-relaunch works
+- [x] `SetWebLifecycleStateState` replaces `WebLifecycleState`
+- [x] `EventScreencastFrame` replaces `ScreencastFrameEvent`
+- [x] `StartScreencastFormat` replaces `CaptureScreenshotFormat` for screencast
+- [x] No custom CDP wrappers needed; the generated types are public
 
-### Phase 4: Fix Streamer (2-3 hours)
-- [ ] Update ScreencastFrameEvent handling
-- [ ] Verify frame ack timing
-- [ ] Test quality switching
-- [ ] Ensure base64 decode works
+### Phase 3: Browser Module — done
 
-### Phase 5: Integration Testing (2-3 hours)
-- [ ] `cargo build --release` succeeds
-- [ ] Launch server, connect client
-- [ ] Test click input
-- [ ] Test scroll/zoom
-- [ ] Test tab freeze/unfreeze
-- [ ] Test stream quality switching
-- [ ] Load test with multiple clients
+- [x] No `page.mouse` / `page.keyboard` references remain
+- [x] Tabs close through `Page.execute(CloseParams)` because `Page::close` consumes `self`
+- [x] Freeze/unfreeze through `Page.setWebLifecycleState` plus media pause
+- [x] Browser relaunch on next `tab:create` after the process dies
+- [x] Persistent profile path made absolute (Chrome rejects relative `--user-data-dir`)
+- [x] New headless mode (Chrome 132+)
 
-### Phase 6: Documentation (1 hour)
-- [ ] Update RUST_STATUS.md (mark as complete)
-- [ ] Update README.md (both versions working)
-- [ ] Add performance comparison
-- [ ] Document deployment
+### Phase 4: Streamer — done
 
-## Total Estimated Time: 10-15 hours
+- [x] `EventScreencastFrame` listener registered before `startScreencast`
+- [x] Frame ack before emit
+- [x] Base64 decode through `Binary::as_ref::<str>()`
+- [x] Quality switching restarts the stream behind a per-tab async gate, so
+      `startScreencast` never races the previous `stopScreencast`
+- [x] Stream generations prevent an old task from removing a newer stream entry
+- [x] First-paint nudge for static tabs (backgrounded tabs emit no frame)
 
-## Alternative: Quick Win with Direct CDP
+### Phase 5: Integration Testing — done
 
-If types still blocked, use direct CDP:
-```rust
-// Instead of importing types:
-let params = serde_json::json!({
-    "state": "frozen"
-});
-page.execute(params).await?;
-```
+- [x] `cargo build --release` succeeds
+- [x] Server starts, `healthz` and static UI respond
+- [x] Socket.IO join / tab create / navigate / watch / screenshot
+- [x] Click, scroll, zoom, type and key accepted without server errors
+- [x] Tab freeze, unfreeze and stream pause/resume
+- [x] Stream quality switching (low/med/high)
+- [x] Multiple tabs; tab close and room cleanup
 
-## Decision Point
+### Phase 6: Documentation — done
 
-**Option A:** Complete Rust version (~2 days)
-- Modern architecture
-- Type safety
-- Better performance
+- [x] `RUST_STATUS.md` rewritten
+- [x] `README.md` updated for both versions
+- [x] Deployment notes: system Chrome/Edge detection, `CHROME` override
+- [x] `examples/monitor.rs` replaces the Node soak pinger
 
-**Option B:** Keep Node.js, archive Rust
-- Already working
-- Less maintenance
-- Proven stable
+## Historical notes
 
-**Recommendation:** Try Option A since 0.9 unblocked input APIs.
+The original blocker was chromiumoxide 0.7, which exposed no input or screencast
+event APIs. 0.9 exposes the generated CDP types and page-level click/move_mouse,
+which unblocked the port. [`RUST_BLOCKED.md`](RUST_BLOCKED.md) is kept for history.

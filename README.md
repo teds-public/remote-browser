@@ -4,17 +4,19 @@ Shared remote browser: one Chromium on desktop, multiple phones control it via L
 
 ## Quick Start
 
-**Node.js (stable):**
+**Node.js:**
 ```bash
 npm install
 npm start
 ```
 
-**Rust (in development - 85%):**
+**Rust:**
 ```bash
-npx playwright install chromium
 cargo run --release
 ```
+
+The Rust version uses an installed Chrome or Edge (auto-detected). Set
+`CHROME=/path/to/browser` to override. On Windows, double-click `run.bat`.
 
 Open `http://localhost:5001` on your phone.
 
@@ -49,22 +51,22 @@ TOKEN=
 ## Documentation
 
 - **[Architecture](docs/ARCHITECTURE.md)** - System design, protocols
-- **[Rust Attempt](docs/RUST_STATUS.md)** - Rust port (80%, blocked by chromiumoxide API)
+- **[Rust Port](docs/RUST_STATUS.md)** - Status, API notes, known gaps
+- **[Rust Roadmap](docs/RUST_ROADMAP.md)** - Completed migration phases
 
 ## Development
 
 ```bash
-npm run dev              # Watch mode
-node scripts/monitor.js  # Latency test
+npm run dev              # Node watch mode
+node scripts/monitor.js  # Node latency test
+cargo run --example monitor  # Rust latency test
 cargo check              # Rust compile check
 ```
 
 ## Troubleshooting
 
-**Chromium not found:**
-```bash
-npx playwright install chromium
-```
+**Chromium not found (Rust):** install Chrome/Edge, or set `CHROME` to its executable.
+The Node version needs `npx playwright install chromium`.
 
 **Black screen:** Set `NO_GPU=true`  
 **High CPU:** Lower quality to 480p  

@@ -1,8 +1,8 @@
 use crate::types::{Frame, RoomId, StreamQuality, TabId};
 use base64::Engine;
 use chromiumoxide::cdp::browser_protocol::page::{
-    ScreencastFrameEvent, ScreencastFrameAckParams, StartScreencastParams,
-    StopScreencastParams, CaptureScreenshotFormat,
+    EventScreencastFrame, ScreencastFrameAckParams, StartScreencastFormat,
+    StartScreencastParams, StopScreencastParams,
 };
 use chromiumoxide::Page;
 use futures::StreamExt;
@@ -14,12 +14,15 @@ use tokio_util::sync::CancellationToken;
 use tracing::{error, info, instrument, warn};
 
 struct ActiveStream {
+    id: u64,
     quality: StreamQuality,
     cancel: CancellationToken,
 }
 
 pub struct Streamer {
     streams: Arc<RwLock<HashMap<TabId, ActiveStream>>>,
+    gates: Arc<RwLock<HashMap<TabId, Arc<tokio::sync::Mutex<()>>>>>,
+    next_id: Arc<std::sync::atomic::AtomicU64>,
     frame_tx: mpsc::UnboundedSender<Frame>,
 }
 
@@ -27,6 +30,8 @@ impl Streamer {
     pub fn new(frame_tx: mpsc::UnboundedSender<Frame>) -> Self {
         Self {
             streams: Arc::new(RwLock::new(HashMap::new())),
+            gates: Arc::new(RwLock::new(HashMap::new())),
+            next_id: Arc::new(std::sync::atomic::AtomicU64::new(1)),
             frame_tx,
         }
     }
@@ -42,7 +47,7 @@ impl Streamer {
 
         if let Some(existing) = streams.get(&tab_id) {
             if existing.quality == quality {
-                info!(%tab_id, "Stream already running at requested quality");
+                tracing::debug!(%tab_id, "Stream already running at requested quality");
                 return Ok(());
             }
 
@@ -51,8 +56,10 @@ impl Streamer {
             streams.remove(&tab_id);
         }
 
+        let id = self.next_id.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let cancel = CancellationToken::new();
         let stream = ActiveStream {
+            id,
             quality,
             cancel: cancel.clone(),
         };
@@ -60,15 +67,26 @@ impl Streamer {
         streams.insert(tab_id, stream);
         drop(streams);
 
+        let gate = self
+            .gates
+            .write()
+            .entry(tab_id)
+            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(())))
+            .clone();
+
         let frame_tx = self.frame_tx.clone();
         let streams = Arc::clone(&self.streams);
 
         tokio::spawn(async move {
-            if let Err(e) = run_stream(tab_id, page, quality, frame_tx, cancel.clone()).await {
+            if let Err(e) = run_stream(tab_id, page, quality, frame_tx, cancel.clone(), gate).await {
                 error!(%tab_id, "Stream error: {}", e);
             }
 
-            streams.write().remove(&tab_id);
+            let mut active = streams.write();
+            if active.get(&tab_id).map(|s| s.id) == Some(id) {
+                active.remove(&tab_id);
+            }
+            drop(active);
             info!(%tab_id, "Stream stopped");
         });
 
@@ -84,8 +102,9 @@ impl Streamer {
         }
     }
 
-    pub fn is_streaming(&self, tab_id: TabId) -> bool {
-        self.streams.read().contains_key(&tab_id)
+    pub fn forget(&self, tab_id: TabId) {
+        self.stop_stream(tab_id);
+        self.gates.write().remove(&tab_id);
     }
 
     pub fn shutdown(&self) {
@@ -103,18 +122,41 @@ async fn run_stream(
     quality: StreamQuality,
     frame_tx: mpsc::UnboundedSender<Frame>,
     cancel: CancellationToken,
+    gate: Arc<tokio::sync::Mutex<()>>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let params = StartScreencastParams {
-        format: Some(CaptureScreenshotFormat::Jpeg),
-        quality: Some(quality.quality() as i64),
-        every_nth_frame: Some(quality.every_nth_frame() as i64),
-        max_width: Some(quality.max_width() as i64),
-        max_height: Some(quality.max_height() as i64),
-    };
+    let _gate = tokio::time::timeout(std::time::Duration::from_secs(5), gate.lock())
+        .await
+        .map_err(|_| "timed out waiting for the previous screencast to stop")?;
 
+    let params = StartScreencastParams::builder()
+        .format(StartScreencastFormat::Jpeg)
+        .quality(quality.quality() as i64)
+        .every_nth_frame(quality.every_nth_frame() as i64)
+        .max_width(quality.max_width() as i64)
+        .max_height(quality.max_height() as i64)
+        .build();
+
+    let mut events = page.event_listener::<EventScreencastFrame>().await?;
+    tracing::debug!(%tab_id, "Screencast listener ready");
+
+    // Headless Chrome only emits a frame once the tab is foregrounded and repainted.
+    page.bring_to_front().await?;
     page.execute(params).await?;
 
-    let mut events = page.event_listener::<ScreencastFrameEvent>().await?;
+    let _ = page
+        .evaluate(
+            "(() => { if (!document.body) return; \
+             const prev = document.body.style.opacity; let n = 0; \
+             const timer = setInterval(() => { \
+               document.body.style.opacity = n % 2 ? '0.999' : '1'; \
+               if (++n < 4) return; \
+               clearInterval(timer); \
+               document.body.style.opacity = prev; \
+             }, 400); })()",
+        )
+        .await;
+
+    info!(%tab_id, "Screencast started");
 
     loop {
         tokio::select! {
@@ -143,15 +185,14 @@ async fn run_stream(
 async fn handle_frame(
     tab_id: TabId,
     page: &Page,
-    event: ScreencastFrameEvent,
+    event: Arc<EventScreencastFrame>,
     frame_tx: &mpsc::UnboundedSender<Frame>,
 ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let jpeg = base64::prelude::BASE64_STANDARD.decode(&event.data)?;
+    let encoded: &str = event.data.as_ref();
+    let jpeg = base64::prelude::BASE64_STANDARD.decode(encoded)?;
+    tracing::debug!(%tab_id, bytes = jpeg.len(), "Screencast frame");
 
-    let ack_params = ScreencastFrameAckParams {
-        session_id: event.session_id,
-    };
-    page.execute(ack_params).await?;
+    page.execute(ScreencastFrameAckParams::new(event.session_id)).await?;
 
     let frame = Frame {
         tab_id,

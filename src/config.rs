@@ -1,6 +1,5 @@
 use crate::error::ConfigError;
 use crate::types::{MaxTabs, Port, Viewport};
-use once_cell::sync::Lazy;
 use serde::Deserialize;
 use std::path::PathBuf;
 
@@ -83,7 +82,3 @@ impl Config {
         Ok(())
     }
 }
-
-pub static CONFIG: Lazy<Config> = Lazy::new(|| {
-    Config::load().expect("Failed to load configuration")
-});

@@ -3,15 +3,17 @@ use crate::error::SocketError;
 use crate::presence::PresenceManager;
 use crate::streamer::Streamer;
 use crate::types::{StreamQuality, TabId, ViewerPrefs};
-use crate::{config, input};
+use crate::input;
+use base64::Engine;
 use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use serde_json::json;
 use socketioxide::extract::{Data, SocketRef};
+use socketioxide::SocketIo;
 use std::sync::Arc;
-use tracing::{error, info, instrument, warn};
+use tracing::{error, info, instrument};
 
 #[derive(Debug, Deserialize)]
-struct JoinData {
+pub(crate) struct JoinData {
     name: String,
     #[serde(default)]
     quality: Option<String>,
@@ -20,42 +22,42 @@ struct JoinData {
 }
 
 #[derive(Debug, Deserialize)]
-struct RenameData {
+pub(crate) struct RenameData {
     name: String,
 }
 
 #[derive(Debug, Deserialize)]
-struct WatchData {
+pub(crate) struct WatchData {
     #[serde(rename = "tabId")]
     tab_id: String,
 }
 
 #[derive(Debug, Deserialize)]
-struct CreateTabData {
+pub(crate) struct CreateTabData {
     url: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
-struct CloseTabData {
+pub(crate) struct CloseTabData {
     #[serde(rename = "tabId")]
     tab_id: String,
 }
 
 #[derive(Debug, Deserialize)]
-struct NavData {
+pub(crate) struct NavData {
     #[serde(rename = "tabId")]
     tab_id: String,
     url: String,
 }
 
 #[derive(Debug, Deserialize)]
-struct TabActionData {
+pub(crate) struct TabActionData {
     #[serde(rename = "tabId")]
     tab_id: String,
 }
 
 #[derive(Debug, Deserialize)]
-struct ClickData {
+pub(crate) struct ClickData {
     #[serde(rename = "tabId")]
     tab_id: String,
     x: f64,
@@ -63,7 +65,7 @@ struct ClickData {
 }
 
 #[derive(Debug, Deserialize)]
-struct ScrollData {
+pub(crate) struct ScrollData {
     #[serde(rename = "tabId")]
     tab_id: String,
     dx: i32,
@@ -71,28 +73,28 @@ struct ScrollData {
 }
 
 #[derive(Debug, Deserialize)]
-struct ZoomData {
+pub(crate) struct ZoomData {
     #[serde(rename = "tabId")]
     tab_id: String,
     dy: i32,
 }
 
 #[derive(Debug, Deserialize)]
-struct TypeData {
+pub(crate) struct TypeData {
     #[serde(rename = "tabId")]
     tab_id: String,
     text: String,
 }
 
 #[derive(Debug, Deserialize)]
-struct KeyData {
+pub(crate) struct KeyData {
     #[serde(rename = "tabId")]
     tab_id: String,
     key: String,
 }
 
 #[derive(Debug, Deserialize)]
-struct StreamPrefsData {
+pub(crate) struct StreamPrefsData {
     quality: String,
     paused: bool,
 }
@@ -113,6 +115,7 @@ pub struct AppState {
     pub browser: Arc<Browser>,
     pub presence: Arc<PresenceManager>,
     pub streamer: Arc<Streamer>,
+    pub io: SocketIo,
 }
 
 fn parse_tab_id(id_str: &str) -> Result<TabId, SocketError> {
@@ -177,9 +180,10 @@ pub async fn on_join(
         viewport: state.browser.viewport(),
     };
 
-    let _ = socket.emit("joined", json!(response));
+    let _ = socket.emit("joined", &response);
 
     send_tabs_sync(&socket, &state).await;
+    broadcast_tabs(&state).await;
 }
 
 #[instrument(skip(socket))]
@@ -193,7 +197,7 @@ pub async fn on_rename(
     };
 
     state.presence.rename(&socket.id.to_string(), data.name);
-    broadcast_tabs_update(&socket, &state).await;
+    broadcast_tabs(&state).await;
 }
 
 #[instrument(skip(socket))]
@@ -214,17 +218,22 @@ pub async fn on_tab_watch(
         }
     };
 
+    if state.browser.get_tab(tab_id).is_none() {
+        let _ = socket.emit("error", &json!({"message": "Tab not found"}));
+        return;
+    }
+
     let old_tab_id = state.presence.get_watching_tab(&socket.id.to_string());
 
     if let Some(old_id) = old_tab_id {
         let room = crate::types::RoomId::for_tab(old_id);
-        let _ = socket.leave(room.as_str());
+        socket.leave(room.to_string());
     }
 
     state.presence.set_watching_tab(&socket.id.to_string(), Some(tab_id));
 
     let room = crate::types::RoomId::for_tab(tab_id);
-    let _ = socket.join(room.as_str());
+    socket.join(room.to_string());
 
     if let Some(old_id) = old_tab_id {
         refresh_stream(old_id, &state).await;
@@ -232,6 +241,7 @@ pub async fn on_tab_watch(
 
     refresh_stream(tab_id, &state).await;
     send_shot(&socket, &state, tab_id).await;
+    broadcast_tabs(&state).await;
 }
 
 #[instrument(skip(socket))]
@@ -245,9 +255,7 @@ pub async fn on_tab_create(
     };
 
     let creator = state.presence
-        .get_viewers_for_tab(TabId::from(0))
-        .first()
-        .map(|(_, _)| "Unknown".to_string())
+        .name_of(&socket.id.to_string())
         .unwrap_or_else(|| "System".to_string());
 
     match state.browser.new_tab(data.url.as_deref(), creator).await {
@@ -255,12 +263,11 @@ pub async fn on_tab_create(
             let response = TabCreatedResponse {
                 tab_id: tab_id.to_string(),
             };
-            let _ = socket.emit("tab:created", json!(response));
-            broadcast_tabs_update(&socket, &state).await;
+            let _ = socket.emit("tab:created", &response);
         }
         Err(e) => {
             error!("Failed to create tab: {}", e);
-            let _ = socket.emit("error", json!({"message": e.to_string()}));
+            let _ = socket.emit("error", &json!({"message": e.to_string()}));
         }
     }
 }
@@ -280,16 +287,14 @@ pub async fn on_tab_close(
         Err(_) => return,
     };
 
-    state.streamer.stop_stream(tab_id);
+    state.streamer.forget(tab_id);
 
     if let Err(e) = state.browser.close_tab(tab_id).await {
         error!("Failed to close tab: {}", e);
     }
 
     let room = crate::types::RoomId::for_tab(tab_id);
-    let _ = socket.leave(room.as_str());
-
-    broadcast_tabs_update(&socket, &state).await;
+    socket.leave(room.to_string());
 }
 
 #[instrument(skip(socket))]
@@ -309,7 +314,7 @@ pub async fn on_nav(
 
     if let Err(e) = state.browser.navigate(tab_id, &data.url).await {
         error!("Navigation failed: {}", e);
-        let _ = socket.emit("error", json!({"message": e.to_string()}));
+        let _ = socket.emit("error", &json!({"message": e.to_string()}));
     }
 }
 
@@ -329,7 +334,7 @@ pub async fn on_nav_back(
     };
 
     if let Some(tab) = state.browser.get_tab(tab_id) {
-        if let Err(e) = tab.page.go_back().await {
+        if let Err(e) = tab.page.evaluate("history.back()").await {
             error!("go_back failed: {}", e);
         }
     }
@@ -390,7 +395,7 @@ pub async fn on_input_click(
     let tab_id = match parse_tab_id(&data.tab_id) {
         Ok(id) => id,
         Err(_) => {
-            let _ = socket.emit("error", json!({"message": "Invalid tab ID"}));
+            let _ = socket.emit("error", &json!({"message": "Invalid tab ID"}));
             return;
         }
     };
@@ -398,7 +403,7 @@ pub async fn on_input_click(
     let tab = match state.browser.get_tab(tab_id) {
         Some(t) => t,
         None => {
-            let _ = socket.emit("error", json!({"message": "Tab not found"}));
+            let _ = socket.emit("error", &json!({"message": "Tab not found"}));
             return;
         }
     };
@@ -411,7 +416,7 @@ pub async fn on_input_click(
         }
         Err(e) => {
             error!(%tab_id, "Click failed: {}", e);
-            let _ = socket.emit("error", json!({"message": e.to_string()}));
+            let _ = socket.emit("error", &json!({"message": e.to_string()}));
         }
     }
 }
@@ -432,7 +437,7 @@ pub async fn on_input_scroll(
     };
 
     if let Some(tab) = state.browser.get_tab(tab_id) {
-        let _ = input::scroll(&tab.page, data.dx, data.dy).await;
+        let _ = input::scroll(&tab.page, data.dx, data.dy, state.browser.viewport()).await;
     }
 }
 
@@ -452,7 +457,7 @@ pub async fn on_input_zoom(
     };
 
     if let Some(tab) = state.browser.get_tab(tab_id) {
-        let _ = input::zoom(&tab.page, data.dy).await;
+        let _ = input::zoom(&tab.page, data.dy, state.browser.viewport()).await;
     }
 }
 
@@ -496,7 +501,7 @@ pub async fn on_input_key(
     if let Some(tab) = state.browser.get_tab(tab_id) {
         if let Err(e) = input::press_key(&tab.page, &data.key).await {
             error!("press_key failed: {}", e);
-            let _ = socket.emit("error", json!({"message": e.to_string()}));
+            let _ = socket.emit("error", &json!({"message": e.to_string()}));
         }
     }
 }
@@ -562,7 +567,7 @@ pub async fn on_disconnect(
 
     if let Some(tab_id) = state.presence.get_watching_tab(&socket.id.to_string()) {
         let room = crate::types::RoomId::for_tab(tab_id);
-        let _ = socket.leave(room.as_str());
+        socket.leave(room.to_string());
 
         state.presence.leave(&socket.id.to_string());
 
@@ -570,18 +575,23 @@ pub async fn on_disconnect(
     } else {
         state.presence.leave(&socket.id.to_string());
     }
+
+    broadcast_tabs(&state).await;
 }
 
 async fn send_tabs_sync(socket: &SocketRef, state: &AppState) {
     let viewers_by_tab = state.presence.viewers_by_tab();
     let tabs = state.browser.list_tabs(&viewers_by_tab);
-    let _ = socket.emit("tabs:sync", json!(tabs));
+    let _ = socket.emit("tabs:sync", &json!(tabs));
 }
 
-async fn broadcast_tabs_update(socket: &SocketRef, state: &AppState) {
+pub async fn broadcast_tabs(state: &AppState) {
     let viewers_by_tab = state.presence.viewers_by_tab();
     let tabs = state.browser.list_tabs(&viewers_by_tab);
-    let _ = socket.broadcast().emit("tabs:update", json!(tabs));
+
+    if let Err(e) = state.io.emit("tabs:update", &json!(tabs)).await {
+        tracing::debug!("Broadcast skipped: {}", e);
+    }
 }
 
 async fn refresh_stream(tab_id: TabId, state: &AppState) {
@@ -614,7 +624,7 @@ async fn send_shot(socket: &SocketRef, state: &AppState, tab_id: TabId) {
                 base64::prelude::BASE64_STANDARD.encode(&bytes)
             );
 
-            let _ = socket.emit("shot", json!({
+            let _ = socket.emit("shot", &json!({
                 "tabId": tab_id.to_string(),
                 "dataUrl": data_url,
             }));

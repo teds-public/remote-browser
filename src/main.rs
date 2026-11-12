@@ -15,7 +15,7 @@ use tokio::sync::mpsc;
 use tower::ServiceBuilder;
 use tower_http::services::ServeDir;
 use tower_http::trace::TraceLayer;
-use tracing::{info, error};
+use tracing::{error, info, warn};
 
 use browser::Browser;
 use presence::PresenceManager;
@@ -52,18 +52,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let streamer = Arc::new(Streamer::new(frame_tx));
     let presence = Arc::new(PresenceManager::new());
 
+    let (layer, io) = SocketIo::new_layer();
+
     let state = Arc::new(AppState {
         browser: browser.clone(),
         presence: presence.clone(),
         streamer: streamer.clone(),
+        io: io.clone(),
     });
 
-    let (layer, io) = SocketIo::new_layer();
+    let mut tab_events = browser.subscribe_events();
+    let event_state = state.clone();
+    tokio::spawn(async move {
+        loop {
+            match tab_events.recv().await {
+                Ok(_) => sockets::broadcast_tabs(&event_state).await,
+                Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {
+                    warn!("Tab event subscriber lagged, skipped {}", skipped);
+                }
+                Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+            }
+        }
+    });
 
+    let ns_state = state.clone();
     io.ns("/", move |socket: SocketRef| async move {
         info!("Client connected: {}", socket.id);
 
-        socket.extensions.insert(state.clone());
+        socket.extensions.insert(ns_state.clone());
 
         socket.on("join", sockets::on_join);
         socket.on("rename", sockets::on_rename);
@@ -91,7 +107,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let data = base64::prelude::BASE64_STANDARD.encode(&frame.jpeg);
 
             if let Err(e) = io_clone
-                .to(frame.room.as_str())
+                .to(frame.room.as_str().to_string())
                 .emit("frame", &serde_json::json!({
                     "tabId": tab_id_str,
                     "data": data
@@ -103,8 +119,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
     });
 
+    let health_state = state.clone();
     let app = Router::new()
-        .route("/healthz", get(|| async { "OK" }))
+        .route(
+            "/healthz",
+            get(move || {
+                let state = health_state.clone();
+                async move {
+                    axum::Json(serde_json::json!({
+                        "ok": true,
+                        "tabs": state.browser.tab_count()
+                    }))
+                }
+            }),
+        )
         .nest_service("/", ServeDir::new("public"))
         .layer(
             ServiceBuilder::new()

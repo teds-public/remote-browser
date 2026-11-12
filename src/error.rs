@@ -24,16 +24,12 @@ pub enum InputError {
     DisallowedKey(String),
     #[error("Text too long: {0} chars (max 500)")]
     TextTooLong(usize),
-    #[error("Tab not found")]
-    TabNotFound,
     #[error("CDP error: {0}")]
     Cdp(#[from] chromiumoxide::error::CdpError),
 }
 
 #[derive(Error, Debug)]
 pub enum SocketError {
-    #[error("Invalid token")]
-    Unauthorized,
     #[error("Missing field: {0}")]
     MissingField(&'static str),
     #[error("Invalid quality: {0}")]

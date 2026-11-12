@@ -1,88 +1,74 @@
-# Rust Conversion Status
+# Rust Port Status
 
-Rust port: **80% complete** — BLOCKED by chromiumoxide API limitations.
+Rust port: **complete and working** on chromiumoxide 0.9 / socketioxide 0.18.
+The Node.js version remains the reference implementation.
 
-## Final Status
+## Verified
 
-**Recommendation: Use Node.js version for production.**
+- `cargo build` and `cargo build --examples` pass (one warning: `TOKEN` is loaded but not enforced).
+- Server starts, launches Chrome/Edge, serves `public/` and `GET /healthz` (`{"ok":true,"tabs":N}`).
+- Socket.IO flow over Engine.IO polling: `join`, `tab:create`, `nav`, `tab:watch`,
+  `input:click|scroll|zoom|type|key`, `stream:prefs`, `shot:refresh`, `tab:close`.
+- CDP screencast: first frame after stream start, quality switch restarts the stream,
+  pause stops frames, resume after unfreeze produces frames again.
+- Tab freeze/unfreeze through `Page.setWebLifecycleState` plus media pause.
+- Lazy browser relaunch: if the browser process dies, the next `tab:create` launches a
+  new instance and clears stale tabs.
+- `examples/monitor.rs` pings `/healthz` and prints latency.
 
-The Rust conversion reached a blocking issue: chromiumoxide 0.7 doesn't expose the CDP APIs needed for input handling and screencast streaming.
+## Modules
 
-## What Works ✅
+| Module | Status |
+|--------|--------|
+| `src/types.rs` | Complete: newtypes, events, quality profiles |
+| `src/error.rs` | Complete: typed errors |
+| `src/config.rs` | Complete: env parsing and validation |
+| `src/presence.rs` | Complete: viewers, prefs, aggregation |
+| `src/browser.rs` | Complete: launch, tabs, navigate, screenshot, freeze, relaunch |
+| `src/input.rs` | Complete: CDP mouse wheel + key events, `Input.insertText` |
+| `src/streamer.rs` | Complete: listener registration, frame ack, per-tab restart gate |
+| `src/sockets.rs` | Complete: all 16 handlers, tab broadcasts |
+| `src/main.rs` | Complete: bootstrap, health, frame pump, graceful shutdown |
 
-| Module | Lines | Status |
-|--------|-------|--------|
-| `src/types.rs` | 180 | ✅ Complete - Newtypes, serialization |
-| `src/error.rs` | 50 | ✅ Complete - thiserror typed errors |
-| `src/config.rs` | 85 | ✅ Complete - Env validation |
-| `src/presence.rs` | 130 | ✅ Complete - State tracking |
-| `src/sockets.rs` | 600 | ✅ Complete - All 16 handlers updated |
-| `src/main.rs` | 150 | ✅ Complete - Server bootstrap |
+## chromiumoxide 0.9 notes
 
-**Total working code: ~1,200 lines**
+- `page.mouse` / `page.keyboard` do not exist. Mouse wheel uses
+  `Input.dispatchMouseEvent`, typing uses `Input.insertText`, keys use
+  `Input.dispatchKeyEvent` with `chromiumoxide::keys`.
+- Event types are named `Event*`: `EventScreencastFrame`, not `ScreencastFrameEvent`.
+- `Page.setWebLifecycleState` takes `SetWebLifecycleStateState`, not `WebLifecycleState`.
+- `Page::close` consumes the page; `CloseParams` via `Page::execute` is used instead.
+- Chrome 132+ removed the old headless mode; the port uses `.new_headless_mode()`.
+- Chrome rejects a relative `--user-data-dir`; `PROFILE_DIR` is resolved to an absolute path.
 
-## What's Blocked 🚫
+## Runtime quirks
 
-| Module | Issue |
-|--------|-------|
-| `src/browser.rs` | chromiumoxide doesn't expose `page.mouse`, `page.keyboard` |
-| `src/input.rs` | Input APIs not public |
-| `src/streamer.rs` | CDP events (`ScreencastFrameEvent`) private |
+- Headless Chrome emits no screencast frame for a static tab. The streamer foregrounds
+  the tab and briefly toggles `body.style.opacity` between `1` and `0.999` after each
+  start to force a paint. The style is restored.
+- `everyNthFrame` (6 for low, 4 for med, 2 for high) means a static page at low quality
+  produces very few frames by design. Frames flow when the page repaints.
+- `Page.setWebLifecycleState` freezes the tab while nobody watches. Unfreezing is
+  best-effort: if Chrome refuses, the stream is still restarted and the next repaint
+  resumes frames.
 
-### Technical Blocker
+## Not implemented
 
-chromiumoxide 0.7 API issues:
+- `TOKEN` authentication. Config loads it, but neither HTTP nor the Socket.IO handshake
+  enforces it. Run on a trusted LAN until this is added.
+- Popup blocking and per-page crash listeners (the Node version has both).
 
-```rust
-// These don't exist in chromiumoxide 0.7:
-page.mouse.click(x, y)        // ❌ Not public
-page.keyboard.type_str(text)  // ❌ Not public
+## Run
 
-// These imports fail:
-use chromiumoxide::cdp::browser_protocol::page::ScreencastFrameEvent;  // ❌ Private
-use chromiumoxide::cdp::browser_protocol::page::WebLifecycleState;     // ❌ Private
+```bash
+cargo run --release
 ```
 
-## Architecture Improvements Demonstrated
-
-Even though blocked, the conversion validated these improvements:
-
-✅ **Typed errors** - `BrowserError::TabNotFound(id)` vs strings  
-✅ **Newtypes** - `TabId`, `RoomId` prevent primitive bugs  
-✅ **Channels** - `mpsc`/`broadcast` replace event emitters  
-✅ **Tracing** - Structured logs with spans  
-✅ **Config validation** - Fail-fast at startup  
-
-## Next Steps
-
-**Option 1: Wait for chromiumoxide 0.9+**
-- Test if newer versions expose needed APIs
-- Minimal code changes if APIs available
-
-**Option 2: Use headless_chrome crate**
-- Different API, would require browser.rs rewrite
-- More mature, better maintained
-
-**Option 3: Hybrid approach**
-- Keep Node.js for CDP operations
-- Rust for HTTP/Socket.IO only
-
-**Option 4: Direct CDP via chromiumoxide-cdp**
-- Bypass high-level Page API
-- More complex, loses abstraction benefits
-
-## Recommendation
-
-**Stay with Node.js** until:
-1. chromiumoxide exposes needed APIs
-2. OR alternative CDP library evaluated
-
-Node.js version is stable, performant, and production-ready.
+Chrome or Edge is detected automatically. Override with `CHROME=/path/to/browser`.
 
 ## Documentation
 
-- [Architecture](ARCHITECTURE.md) - System design (Node.js)
-- [Blocked Details](RUST_BLOCKED.md) - Technical API issues
-
-The Rust code remains in the `rust` branch as reference for future attempts.
-
+- [Architecture](ARCHITECTURE.md) - system design
+- [Roadmap](RUST_ROADMAP.md) - completed phases and discovery notes
+- [chromiumoxide 0.9 discovery](CHROMIUMOXIDE_09_DISCOVERY.md) - API mapping
+- [Blocked details](RUST_BLOCKED.md) - historical 0.7 limitations

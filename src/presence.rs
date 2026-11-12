@@ -51,21 +51,16 @@ impl PresenceManager {
         self.users.read().get(socket_id)?.tab_id
     }
 
+    pub fn name_of(&self, socket_id: &str) -> Option<String> {
+        self.users.read().get(socket_id).map(|p| p.name.clone())
+    }
+
     pub fn get_viewers_for_tab(&self, tab_id: TabId) -> Vec<(String, ViewerPrefs)> {
         self.users
             .read()
             .values()
             .filter(|p| p.tab_id == Some(tab_id))
             .map(|p| (p.socket_id.clone(), p.prefs.clone()))
-            .collect()
-    }
-
-    pub fn get_viewer_names_for_tab(&self, tab_id: TabId) -> Vec<String> {
-        self.users
-            .read()
-            .values()
-            .filter(|p| p.tab_id == Some(tab_id))
-            .map(|p| p.name.clone())
             .collect()
     }
 
