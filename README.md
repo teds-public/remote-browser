@@ -49,7 +49,7 @@ TOKEN=
 ## Documentation
 
 - **[Architecture](docs/ARCHITECTURE.md)** - System design, protocols
-- **[Rust Status](docs/RUST_STATUS.md)** - Rust port (85% complete)
+- **[Rust Attempt](docs/RUST_STATUS.md)** - Rust port (80%, blocked by chromiumoxide API)
 
 ## Development
 
