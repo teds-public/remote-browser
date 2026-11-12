@@ -138,7 +138,7 @@ fn parse_quality(s: &str) -> Result<StreamQuality, SocketError> {
 }
 
 fn get_state(socket: &SocketRef) -> Option<Arc<AppState>> {
-    socket.extensions.get::<Arc<AppState>>().cloned()
+    socket.extensions.get::<Arc<AppState>>().map(|s| Arc::clone(&s))
 }
 
 #[instrument(skip(socket))]
@@ -182,22 +182,30 @@ pub async fn on_join(
     send_tabs_sync(&socket, &state).await;
 }
 
-#[instrument(skip(socket, state))]
+#[instrument(skip(socket))]
 pub async fn on_rename(
     socket: SocketRef,
     Data(data): Data<RenameData>,
-    State(state): State<Arc<AppState>>,
 ) {
+    let state = match get_state(&socket) {
+        Some(s) => s,
+        None => return,
+    };
+
     state.presence.rename(&socket.id.to_string(), data.name);
     broadcast_tabs_update(&socket, &state).await;
 }
 
-#[instrument(skip(socket, state))]
+#[instrument(skip(socket))]
 pub async fn on_tab_watch(
     socket: SocketRef,
     Data(data): Data<WatchData>,
-    State(state): State<Arc<AppState>>,
 ) {
+    let state = match get_state(&socket) {
+        Some(s) => s,
+        None => return,
+    };
+
     let tab_id = match parse_tab_id(&data.tab_id) {
         Ok(id) => id,
         Err(_) => {
@@ -226,12 +234,16 @@ pub async fn on_tab_watch(
     send_shot(&socket, &state, tab_id).await;
 }
 
-#[instrument(skip(socket, state))]
+#[instrument(skip(socket))]
 pub async fn on_tab_create(
     socket: SocketRef,
     Data(data): Data<CreateTabData>,
-    State(state): State<Arc<AppState>>,
 ) {
+    let state = match get_state(&socket) {
+        Some(s) => s,
+        None => return,
+    };
+
     let creator = state.presence
         .get_viewers_for_tab(TabId::from(0))
         .first()
@@ -253,12 +265,16 @@ pub async fn on_tab_create(
     }
 }
 
-#[instrument(skip(socket, state))]
+#[instrument(skip(socket))]
 pub async fn on_tab_close(
     socket: SocketRef,
     Data(data): Data<CloseTabData>,
-    State(state): State<Arc<AppState>>,
 ) {
+    let state = match get_state(&socket) {
+        Some(s) => s,
+        None => return,
+    };
+
     let tab_id = match parse_tab_id(&data.tab_id) {
         Ok(id) => id,
         Err(_) => return,
@@ -276,12 +292,16 @@ pub async fn on_tab_close(
     broadcast_tabs_update(&socket, &state).await;
 }
 
-#[instrument(skip(socket, state))]
+#[instrument(skip(socket))]
 pub async fn on_nav(
     socket: SocketRef,
     Data(data): Data<NavData>,
-    State(state): State<Arc<AppState>>,
 ) {
+    let state = match get_state(&socket) {
+        Some(s) => s,
+        None => return,
+    };
+
     let tab_id = match parse_tab_id(&data.tab_id) {
         Ok(id) => id,
         Err(_) => return,
@@ -293,12 +313,16 @@ pub async fn on_nav(
     }
 }
 
-#[instrument(skip(socket, state))]
+#[instrument(skip(socket))]
 pub async fn on_nav_back(
     socket: SocketRef,
     Data(data): Data<TabActionData>,
-    State(state): State<Arc<AppState>>,
 ) {
+    let state = match get_state(&socket) {
+        Some(s) => s,
+        None => return,
+    };
+
     let tab_id = match parse_tab_id(&data.tab_id) {
         Ok(id) => id,
         Err(_) => return,
@@ -311,12 +335,16 @@ pub async fn on_nav_back(
     }
 }
 
-#[instrument(skip(socket, state))]
+#[instrument(skip(socket))]
 pub async fn on_nav_reload(
     socket: SocketRef,
     Data(data): Data<TabActionData>,
-    State(state): State<Arc<AppState>>,
 ) {
+    let state = match get_state(&socket) {
+        Some(s) => s,
+        None => return,
+    };
+
     let tab_id = match parse_tab_id(&data.tab_id) {
         Ok(id) => id,
         Err(_) => return,
@@ -329,12 +357,16 @@ pub async fn on_nav_reload(
     }
 }
 
-#[instrument(skip(socket, state))]
+#[instrument(skip(socket))]
 pub async fn on_tab_reload(
     socket: SocketRef,
     Data(data): Data<TabActionData>,
-    State(state): State<Arc<AppState>>,
 ) {
+    let state = match get_state(&socket) {
+        Some(s) => s,
+        None => return,
+    };
+
     let tab_id = match parse_tab_id(&data.tab_id) {
         Ok(id) => id,
         Err(_) => return,
@@ -345,12 +377,16 @@ pub async fn on_tab_reload(
     }
 }
 
-#[instrument(skip(socket, state))]
+#[instrument(skip(socket))]
 pub async fn on_input_click(
     socket: SocketRef,
     Data(data): Data<ClickData>,
-    State(state): State<Arc<AppState>>,
 ) {
+    let state = match get_state(&socket) {
+        Some(s) => s,
+        None => return,
+    };
+
     let tab_id = match parse_tab_id(&data.tab_id) {
         Ok(id) => id,
         Err(_) => {
@@ -380,12 +416,16 @@ pub async fn on_input_click(
     }
 }
 
-#[instrument(skip(socket, state))]
+#[instrument(skip(socket))]
 pub async fn on_input_scroll(
     socket: SocketRef,
     Data(data): Data<ScrollData>,
-    State(state): State<Arc<AppState>>,
 ) {
+    let state = match get_state(&socket) {
+        Some(s) => s,
+        None => return,
+    };
+
     let tab_id = match parse_tab_id(&data.tab_id) {
         Ok(id) => id,
         Err(_) => return,
@@ -396,12 +436,16 @@ pub async fn on_input_scroll(
     }
 }
 
-#[instrument(skip(socket, state))]
+#[instrument(skip(socket))]
 pub async fn on_input_zoom(
     socket: SocketRef,
     Data(data): Data<ZoomData>,
-    State(state): State<Arc<AppState>>,
 ) {
+    let state = match get_state(&socket) {
+        Some(s) => s,
+        None => return,
+    };
+
     let tab_id = match parse_tab_id(&data.tab_id) {
         Ok(id) => id,
         Err(_) => return,
@@ -412,12 +456,16 @@ pub async fn on_input_zoom(
     }
 }
 
-#[instrument(skip(socket, state))]
+#[instrument(skip(socket))]
 pub async fn on_input_type(
     socket: SocketRef,
     Data(data): Data<TypeData>,
-    State(state): State<Arc<AppState>>,
 ) {
+    let state = match get_state(&socket) {
+        Some(s) => s,
+        None => return,
+    };
+
     let tab_id = match parse_tab_id(&data.tab_id) {
         Ok(id) => id,
         Err(_) => return,
@@ -430,12 +478,16 @@ pub async fn on_input_type(
     }
 }
 
-#[instrument(skip(socket, state))]
+#[instrument(skip(socket))]
 pub async fn on_input_key(
     socket: SocketRef,
     Data(data): Data<KeyData>,
-    State(state): State<Arc<AppState>>,
 ) {
+    let state = match get_state(&socket) {
+        Some(s) => s,
+        None => return,
+    };
+
     let tab_id = match parse_tab_id(&data.tab_id) {
         Ok(id) => id,
         Err(_) => return,
@@ -449,12 +501,16 @@ pub async fn on_input_key(
     }
 }
 
-#[instrument(skip(socket, state))]
+#[instrument(skip(socket))]
 pub async fn on_stream_prefs(
     socket: SocketRef,
     Data(data): Data<StreamPrefsData>,
-    State(state): State<Arc<AppState>>,
 ) {
+    let state = match get_state(&socket) {
+        Some(s) => s,
+        None => return,
+    };
+
     let quality = match parse_quality(&data.quality) {
         Ok(q) => q,
         Err(_) => {
@@ -476,12 +532,16 @@ pub async fn on_stream_prefs(
     }
 }
 
-#[instrument(skip(socket, state))]
+#[instrument(skip(socket))]
 pub async fn on_shot_refresh(
     socket: SocketRef,
     Data(data): Data<WatchData>,
-    State(state): State<Arc<AppState>>,
 ) {
+    let state = match get_state(&socket) {
+        Some(s) => s,
+        None => return,
+    };
+
     let tab_id = match parse_tab_id(&data.tab_id) {
         Ok(id) => id,
         Err(_) => return,
@@ -492,8 +552,12 @@ pub async fn on_shot_refresh(
 
 pub async fn on_disconnect(
     socket: SocketRef,
-    State(state): State<Arc<AppState>>,
 ) {
+    let state = match get_state(&socket) {
+        Some(s) => s,
+        None => return,
+    };
+
     info!("Client disconnected: {}", socket.id);
 
     if let Some(tab_id) = state.presence.get_watching_tab(&socket.id.to_string()) {

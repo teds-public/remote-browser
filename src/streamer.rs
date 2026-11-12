@@ -121,18 +121,14 @@ async fn run_stream(
             _ = cancel.cancelled() => {
                 break;
             }
-            event = events.next() => {
-                match event {
-                    Some(event) => {
-                        if let Err(e) = handle_frame(tab_id, &page, event, &frame_tx).await {
-                            warn!(%tab_id, "Frame handling error: {}", e);
-                        }
-                    }
-                    None => {
-                        warn!(%tab_id, "Frame stream ended");
-                        break;
-                    }
+            Some(event) = events.next() => {
+                if let Err(e) = handle_frame(tab_id, &page, event, &frame_tx).await {
+                    warn!(%tab_id, "Frame handling error: {}", e);
                 }
+            }
+            else => {
+                warn!(%tab_id, "Frame stream ended");
+                break;
             }
         }
     }

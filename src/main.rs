@@ -8,6 +8,7 @@ mod streamer;
 mod types;
 
 use axum::{routing::get, Router};
+use base64::Engine;
 use socketioxide::{SocketIo, extract::SocketRef};
 use std::sync::Arc;
 use tokio::sync::mpsc;
@@ -59,7 +60,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let (layer, io) = SocketIo::new_layer();
 
-    io.ns("/", move |socket: SocketRef| {
+    io.ns("/", move |socket: SocketRef| async move {
         info!("Client connected: {}", socket.id);
 
         socket.extensions.insert(state.clone());
@@ -86,7 +87,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let io_clone = io.clone();
     tokio::spawn(async move {
         while let Some(frame) = frame_rx.recv().await {
-            if let Err(e) = io_clone.to(frame.room.as_str()).emit_binary("frame", frame.jpeg) {
+            let tab_id_str = frame.tab_id.to_string();
+            let data = base64::prelude::BASE64_STANDARD.encode(&frame.jpeg);
+
+            if let Err(e) = io_clone
+                .to(frame.room.as_str())
+                .emit("frame", &serde_json::json!({
+                    "tabId": tab_id_str,
+                    "data": data
+                }))
+                .await
+            {
                 error!("Failed to emit frame: {}", e);
             }
         }
