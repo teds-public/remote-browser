@@ -1,7 +1,7 @@
 'use strict';
 
 const token = new URLSearchParams(location.search).get('token') || null;
-const socket = io({ reconnection: true, auth: token ? { token } : {} });
+const socket = io({ path: '/live', reconnection: true, auth: token ? { token } : {} });
 const $ = (id) => document.getElementById(id);
 const img = $('shot');
 const view = $('view');
@@ -331,6 +331,8 @@ socket.on('tabs:sync', applyTabs);
 socket.on('tabs:update', applyTabs);
 
 socket.on('tab:created', ({ tabId }) => watchTab(tabId));
+
+socket.on('tab:creating', () => toast('Creating tab, please wait...'));
 
 socket.on('frame', (tabId, blob) => {
   if (tabId !== activeTabId || streamPaused()) return;

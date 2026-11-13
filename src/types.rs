@@ -6,8 +6,7 @@ use std::time::SystemTime;
 
 static TAB_COUNTER: AtomicUsize = AtomicUsize::new(0);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(transparent)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize)]
 pub struct TabId(usize);
 
 impl TabId {
@@ -21,6 +20,12 @@ impl TabId {
 
     pub fn as_str(&self) -> String {
         format!("t{}", self.0)
+    }
+}
+
+impl Serialize for TabId {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.serialize_str(&self.as_str())
     }
 }
 

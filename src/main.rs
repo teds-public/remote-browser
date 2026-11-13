@@ -1,3 +1,5 @@
+#![windows_subsystem = "windows"]
+
 mod browser;
 mod config;
 mod error;
@@ -5,16 +7,38 @@ mod input;
 mod presence;
 mod sockets;
 mod streamer;
+mod tray;
 mod types;
 
+use axum::response::Html;
 use axum::{routing::get, Router};
-use base64::Engine;
 use socketioxide::{SocketIo, extract::SocketRef};
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tower::ServiceBuilder;
-use tower_http::services::ServeDir;
 use tower_http::trace::TraceLayer;
+// Web UI is baked into the exe so one file runs on another machine.
+const INDEX_HTML: &str = include_str!("../public/index.html");
+const CLIENT_JS: &str = include_str!("../public/client.js");
+const SOCKETIO_JS: &str = include_str!("../public/socket.io/socket.io.js");
+
+async fn index() -> Html<&'static str> {
+    Html(INDEX_HTML)
+}
+
+async fn client_js() -> impl axum::response::IntoResponse {
+    (
+        [(axum::http::header::CONTENT_TYPE, "application/javascript")],
+        CLIENT_JS,
+    )
+}
+
+async fn socketio_js() -> impl axum::response::IntoResponse {
+    (
+        [(axum::http::header::CONTENT_TYPE, "application/javascript")],
+        SOCKETIO_JS,
+    )
+}
 use tracing::{error, info, warn};
 
 use browser::Browser;
@@ -52,7 +76,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let streamer = Arc::new(Streamer::new(frame_tx));
     let presence = Arc::new(PresenceManager::new());
 
-    let (layer, io) = SocketIo::new_layer();
+    let (layer, io) = SocketIo::builder().req_path("/live").build_layer();
+
+    let (quit_tx, quit_rx) = tokio::sync::oneshot::channel();
+    tray::spawn(config.port.0, quit_tx);
 
     let state = Arc::new(AppState {
         browser: browser.clone(),
@@ -104,14 +131,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tokio::spawn(async move {
         while let Some(frame) = frame_rx.recv().await {
             let tab_id_str = frame.tab_id.to_string();
-            let data = base64::prelude::BASE64_STANDARD.encode(&frame.jpeg);
 
             if let Err(e) = io_clone
                 .to(frame.room.as_str().to_string())
-                .emit("frame", &serde_json::json!({
-                    "tabId": tab_id_str,
-                    "data": data
-                }))
+                .emit("frame", &(tab_id_str, bytes::Bytes::from(frame.jpeg)))
                 .await
             {
                 error!("Failed to emit frame: {}", e);
@@ -133,7 +156,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }),
         )
-        .nest_service("/", ServeDir::new("public"))
+        .route("/", get(index))
+        .route("/client.js", get(client_js))
+        .route("/socket.io/socket.io.js", get(socketio_js))
         .layer(
             ServiceBuilder::new()
                 .layer(TraceLayer::new_for_http())
@@ -145,13 +170,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     info!("Server listening on {}", addr);
 
     axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown_signal(streamer))
+        .with_graceful_shutdown(shutdown_signal(
+            streamer.clone(),
+            browser.clone(),
+            quit_rx,
+        ))
         .await?;
 
     Ok(())
 }
 
-async fn shutdown_signal(streamer: Arc<Streamer>) {
+async fn shutdown_signal(
+    streamer: Arc<Streamer>,
+    browser: Arc<Browser>,
+    quit_rx: tokio::sync::oneshot::Receiver<()>,
+) {
     let ctrl_c = async {
         tokio::signal::ctrl_c()
             .await
@@ -172,8 +205,10 @@ async fn shutdown_signal(streamer: Arc<Streamer>) {
     tokio::select! {
         _ = ctrl_c => {},
         _ = terminate => {},
+        _ = quit_rx => {}
     }
 
     info!("Shutdown signal received");
     streamer.shutdown();
+    browser.shutdown();
 }

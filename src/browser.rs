@@ -4,6 +4,7 @@ use chromiumoxide::browser::{Browser as ChromeBrowser, BrowserConfig};
 use chromiumoxide::cdp::browser_protocol::page::{
     CaptureScreenshotFormat, CloseParams, SetWebLifecycleStateParams, SetWebLifecycleStateState,
 };
+use chromiumoxide::cdp::browser_protocol::emulation::SetDeviceMetricsOverrideParams;
 use chromiumoxide::page::ScreenshotParams;
 use futures::StreamExt;
 use parking_lot::RwLock;
@@ -38,8 +39,8 @@ impl Browser {
         no_gpu: bool,
         max_tabs: usize,
     ) -> Result<Arc<Self>, BrowserError> {
-        info!("Launching browser");
-
+        // No Chrome process here: it spawns lazily on the first tab so the
+        // server always reaches listening even if Chrome is slow or stuck.
         let launch = LaunchOptions {
             profile_dir: profile_dir.as_ref().to_path_buf(),
             viewport,
@@ -48,20 +49,15 @@ impl Browser {
             max_tabs,
         };
 
-        let (browser, handler) = spawn_chrome(&launch).await?;
         let (event_tx, _) = broadcast::channel(100);
 
-        let browser = Arc::new(Self {
-            browser: RwLock::new(Some(Arc::new(browser))),
+        Ok(Arc::new(Self {
+            browser: RwLock::new(None),
             launch,
             tabs: Arc::new(RwLock::new(HashMap::new())),
             event_tx,
             relaunch_lock: tokio::sync::Mutex::new(()),
-        });
-
-        Self::watch(browser.clone(), handler);
-
-        Ok(browser)
+        }))
     }
 
     fn watch(this: Arc<Self>, mut handler: chromiumoxide::Handler) {
@@ -105,9 +101,54 @@ impl Browser {
             return Ok(browser);
         }
 
-        info!("Relaunching browser");
-        let (chrome, handler) = spawn_chrome(&self.launch).await?;
+        info!("Spawning browser on demand");
+        let spawn = tokio::time::timeout(
+            std::time::Duration::from_secs(45),
+            spawn_chrome(&self.launch),
+        )
+        .await
+        .map_err(|_| {
+            BrowserError::NavigationFailed("timed out waiting for Chrome to start".to_string())
+        })?;
+        let (chrome, handler) = spawn.map_err(|e| {
+            warn!("Chrome failed to start (is another chrome.exe holding the profile?): {}", e);
+            e
+        })?;
         let chrome = Arc::new(chrome);
+
+        // Adopt the window's initial tab so driving the desktop address bar
+        // navigates a streamed tab instead of an untracked one.
+        match tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            chrome.pages(),
+        )
+        .await
+        {
+            Ok(Ok(pages)) => {
+                for page in pages {
+                    let page = Arc::new(page);
+                    if let Err(e) = page
+                        .execute(SetDeviceMetricsOverrideParams::new(
+                            self.launch.viewport.width as i64,
+                            self.launch.viewport.height as i64,
+                            1.0,
+                            false,
+                        ))
+                        .await
+                    {
+                        warn!("Failed to pin viewport: {}", e);
+                    }
+                    let id = TabId::next();
+                    self.tabs.write().insert(
+                        id,
+                        Arc::new(Tab::new(id, page, "System".to_string())),
+                    );
+                    info!(%id, "Adopted startup tab");
+                }
+            }
+            Ok(Err(e)) => warn!("Failed to list initial tabs: {}", e),
+            Err(_) => warn!("Timed out listing initial tabs"),
+        }
 
         *self.browser.write() = Some(chrome.clone());
         Self::watch(self.clone(), handler);
@@ -117,6 +158,19 @@ impl Browser {
 
     pub fn subscribe_events(&self) -> broadcast::Receiver<TabEvent> {
         self.event_tx.subscribe()
+    }
+
+    pub fn shutdown_if_idle(&self) {
+        if self.tabs.read().is_empty() {
+            *self.browser.write() = None;
+            info!("No tabs left, shut down browser");
+        }
+    }
+
+    pub fn shutdown(&self) {
+        self.tabs.write().clear();
+        *self.browser.write() = None;
+        info!("Browser shut down");
     }
 
     #[instrument(skip(self))]
@@ -134,6 +188,21 @@ impl Browser {
 
         let browser = self.ensure_browser().await?;
         let page = browser.new_page("about:blank").await?;
+
+        // Headful windows rarely match the configured size, so pin the page
+        // viewport explicitly like Playwright does for the Node version.
+        if let Err(e) = page
+            .execute(SetDeviceMetricsOverrideParams::new(
+                self.launch.viewport.width as i64,
+                self.launch.viewport.height as i64,
+                1.0,
+                false,
+            ))
+            .await
+        {
+            warn!("Failed to pin viewport: {}", e);
+        }
+
         let id = TabId::next();
 
         let tab = Arc::new(Tab::new(id, Arc::new(page), creator.clone()));
@@ -300,11 +369,26 @@ async fn spawn_chrome(
         args.push("--disable-gpu".to_string());
     }
 
+    if !launch.headless {
+        args.push("--start-maximized".to_string());
+        args.push("--hide-crash-restore-bubble".to_string());
+    }
+
     let executable = chromiumoxide::detection::default_executable(Default::default())
         .map_err(BrowserError::NavigationFailed)?;
     info!(?executable, "Using browser executable");
 
     let profile_dir = absolute_profile_dir(&launch.profile_dir)?;
+
+    // A killed Chrome leaves its Singleton locks behind and the next instance
+    // then hangs or exits instead of starting. No live Chrome uses this
+    // profile at spawn time, so stale locks are safe to drop.
+    for name in ["SingletonSocket", "SingletonLock", "SingletonCookie"] {
+        let lock = profile_dir.join(name);
+        if lock.exists() {
+            let _ = std::fs::remove_file(&lock);
+        }
+    }
 
     let mut builder = BrowserConfig::builder()
         .chrome_executable(&executable)

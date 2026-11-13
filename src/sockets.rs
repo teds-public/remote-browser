@@ -7,7 +7,7 @@ use crate::input;
 use base64::Engine;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use socketioxide::extract::{Data, SocketRef};
+use socketioxide::extract::{AckSender, Data, SocketRef};
 use socketioxide::SocketIo;
 use std::sync::Arc;
 use tracing::{error, info, instrument};
@@ -258,6 +258,8 @@ pub async fn on_tab_create(
         .name_of(&socket.id.to_string())
         .unwrap_or_else(|| "System".to_string());
 
+    let _ = socket.emit("tab:creating", &json!({}));
+
     match state.browser.new_tab(data.url.as_deref(), creator).await {
         Ok(tab_id) => {
             let response = TabCreatedResponse {
@@ -295,6 +297,9 @@ pub async fn on_tab_close(
 
     let room = crate::types::RoomId::for_tab(tab_id);
     socket.leave(room.to_string());
+
+    state.browser.shutdown_if_idle();
+    broadcast_tabs(&state).await;
 }
 
 #[instrument(skip(socket))]
@@ -382,10 +387,11 @@ pub async fn on_tab_reload(
     }
 }
 
-#[instrument(skip(socket))]
+#[instrument(skip(socket, ack))]
 pub async fn on_input_click(
     socket: SocketRef,
     Data(data): Data<ClickData>,
+    ack: AckSender,
 ) {
     let state = match get_state(&socket) {
         Some(s) => s,
@@ -413,10 +419,11 @@ pub async fn on_input_click(
     match input::click(&tab.page, data.x, data.y, viewport).await {
         Ok(_) => {
             info!(%tab_id, x = data.x, y = data.y, "Click successful");
+            let _ = ack.send(&json!({"ok": true}));
         }
         Err(e) => {
             error!(%tab_id, "Click failed: {}", e);
-            let _ = socket.emit("error", &json!({"message": e.to_string()}));
+            let _ = ack.send(&json!({"ok": false, "message": e.to_string()}));
         }
     }
 }

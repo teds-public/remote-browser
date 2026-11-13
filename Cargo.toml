@@ -35,6 +35,9 @@ rand = "0.8"
 bytes = "1.9"
 tokio-util = "0.7"
 futures = "0.3"
+tray-icon = "0.19"
+muda = "0.15"
+windows-sys = { version = "0.59", features = ["Win32_System_Console", "Win32_UI_WindowsAndMessaging", "Win32_Foundation"] }
 
 [dev-dependencies]
 

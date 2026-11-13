@@ -3,5 +3,6 @@ node_modules/
 profile/
 *.log
 /target
+/dist/
 Cargo.lock
 /.env.local

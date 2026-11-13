@@ -1,5 +1,7 @@
 @echo off
-echo Checking for Rust installation...
+setlocal
+cd /d %~dp0
+
 where cargo >nul 2>nul
 if %ERRORLEVEL% NEQ 0 (
     echo Cargo not found. Please install Rust from https://rustup.rs/
@@ -18,7 +20,14 @@ if not exist Cargo.toml (
     exit /b 1
 )
 
-echo Building and running remote-browser...
-cargo run --release
+echo Building remote-browser...
+cargo build --release
+if %ERRORLEVEL% NEQ 0 (
+    echo Build failed.
+    pause
+    exit /b 1
+)
 
-pause
+echo Starting remote-browser in tray...
+start "remote-browser" target\release\remote-browser.exe
+exit
